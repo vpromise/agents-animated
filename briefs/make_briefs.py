@@ -1,0 +1,122 @@
+"""Write one subagent brief per episode (briefs/epNN.md) for "Agents, Animated", from the rows of
+COURSE.md, the per-episode notes in SPEC (briefs/spec.py), and the series notes below.
+Run: python3 briefs/make_briefs.py [N ...]"""
+
+import re
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+SERIES_DIR = HERE.parent
+sys.path.insert(0, str(HERE))
+from spec import SPEC  # noqa: E402  number → (slug, ClassName, [reference episodes], notes sections, notes)
+
+NARRATOR_PYTHON = "~/rag-video/tts/.venv/bin/python"
+MODULE_NAMES = {1: "FOUNDATIONS", 2: "CONTEXT ENGINEERING", 3: "MEMORY & KNOWLEDGE", 4: "TOOLS & SAFETY",
+                5: "SCALING UP", 6: "BEYOND THE LOOP"}
+
+# finished episodes usable as style references: "AI, Explained" (old palette) until agent episodes exist
+REFS = {
+    "ag01": ("/Users/vpromisex/videos/agent-series/ep01-what-is-an-agent/scene.py", "THIS series' opener in the new style: Otto, a scrolling context column, terminal, comparison cards, recap, module map"),
+    "ag02": ("/Users/vpromisex/videos/agent-series/ep02-the-agent-loop/scene.py", "THIS series' core episode in the new style: the 10-line loop stepped beside a growing messages list, a call packet flying to the model, asserts tying every number to a real run"),
+    "ai44": ("/Users/vpromisex/videos/ai-series/ep44-agents-tool-use/scene.py", "agents & tool use in the old series: JSON tool calls in Menlo, an agent trace, a confirm dialog"),
+    "ai31": ("/Users/vpromisex/videos/ai-series/ep31-prompting-icl/scene.py", "prompts as code windows, a frozen network, odds bars"),
+    "ai23": ("/Users/vpromisex/videos/ai-series/ep23-tokenization/scene.py", "chips and live merges, counts and costs"),
+    "ai37": ("/Users/vpromisex/videos/ai-series/ep37-efficient-attention/scene.py", "memory/GPU budgets, KV cache sizes computed and asserted"),
+    "ai43": ("/Users/vpromisex/videos/ai-series/ep43-reasoning-test-time/scene.py", "sampling several chains, voting, verifiers, cost curves"),
+    "ai46": ("/Users/vpromisex/videos/ai-series/ep46-alignment-evaluation/scene.py", "reward hacking, benchmarks, contamination, red-teaming"),
+    "ai12": ("/Users/vpromisex/videos/ai-series/ep12-chain-rule-backprop/scene.py", "a small graph worked step by step with real numbers"),
+    "ai32": ("/Users/vpromisex/videos/ai-series/ep32-rag/scene.py", "retrieval pipeline, vector map, prompt window, cited answer"),
+    "ai30": ("/Users/vpromisex/videos/ai-series/ep30-rlhf-dpo/scene.py", "preferences, reward model, RL loop, a worked loss"),
+}
+
+TEMPLATE = """You are producing ONE narrated animated tutorial for the course "Agents, Animated" — how AI agents really work, from one loop to a team (Mac, Apple Silicon). Work fully autonomously and finish with a short report.
+
+YOUR EPISODE: Episode {N} · "{TITLE}" (Module {M} · {MODULE_NAME}). Folder: {SERIES_DIR}/ep{NN}-{slug}/ (create it). Scene class: `Ep{NN}{ClassName}(Episode)` with `number = {N}`.
+Goal (what the viewer will understand): {GOAL}
+Key concepts: {CONCEPTS}
+Mechanism to animate: {MECHANISM}
+Running example: {EXAMPLE}
+EPISODE NOTES: {NOTES}
+
+READ FIRST, in this order:
+1. ~/.claude/skills/tutorial-video/SKILL.md, then reference/narration.md, reference/design.md, reference/manimgx.md (gotchas 19–21 matter), reference/series.md.
+2. {SERIES_DIR}/COURSE.md (the whole course: what comes before and after yours — link to other episodes by number, never repeat them at length).
+3. {SERIES_DIR}/kit.py — the NEW visual system (warm graphite, Futura/Avenir/Menlo) and the agent components: message(), ContextColumn (push messages; it scrolls), Meter (token gauge), tool_call()/tool_result()/json_card(), terminal(), code_block(), file_tree(), loop_ring(), otto() (the series' agent), title_text(), header via self.new_header(tag, title). Then look at its storyboards ({SERIES_DIR}/KitDemo.storyboard*.png, already current — do not re-run kit_demo.py, it writes outside your folder).
+4. {SERIES_DIR}/harness_reference.py — the canonical code. Any code you show is an excerpt of it (≤ 10 lines per block); you may simplify, but keep its names (agent_loop, messages, client.messages.create, response.stop_reason, "tool_use", "tool_result", tool_use_id, TOOLS, TOOL_HANDLERS, run_tool, run_bash). New mechanisms (your episode's topic) are written in the same style.
+5. {SERIES_DIR}/research/notes.md — sections: {NOTES_SECTIONS}. These are the facts, numbers and sources from the two references (learn.shareai.run = "Learn Claude Code", 20 sessions; Li Bojie, "AI Agents in Depth", 10 chapters). Open the original pages it links when you need more detail (WebFetch).
+6. Style references: FIRST the finished episodes of THIS series (ag01/ag02 — the new palette and visual language to match: read their scene.py and look at a few of their storyboard PNGs), then films from the sister series "AI, Explained" (same engine and pacing, OLD palette — copy structure and care, NOT colours or fonts): {REFERENCE_EPISODES}.
+
+Match the series: one running example carried through the episode, a header (mono tag + Futura title via self.new_header) per section, sections via self.next_section(...), ~38–46 narrated self.say(...) lines, 3.5–4.5 minutes, a three-word recap near the end. Show mechanisms MOVING: messages entering the context, tool calls going out and results coming back, loops turning, files changing, gauges filling. Every number on screen is computed in the scene and asserted (or cited); invented data is said "for example" and recorded as illustrative in the section notes.
+
+HARD RULES (other agents work in the same series folder at the same time):
+- Write only inside your episode folder. Do NOT edit kit.py, COURSE.md, lexicon.json, harness_reference.py, other episodes, or existing files in {SERIES_DIR}/assets/. You MAY add NEW icon SVGs to assets/ named `ep{NN}-*.svg` (flat 2-tone, new palette — see the colours in kit.py), and recoloured copies via kit's recolored(name, color, fill, prefix="ep{NN}").
+- The narrator is ALREADY RUNNING at http://127.0.0.1:8765/speak, shared by several agents (requests queue). NEVER start, stop or restart it. If a request fails, wait a minute and retry. Its log is {SERIES_DIR}/narrator.log (shared, appended).
+- Python with Whisper: {NARRATOR_PYTHON}. ManimGX CLI: manimgx. Keep each response and tool output compact (pipe long logs through tail/grep): long turns time out. In the shell, `ls` is aliased to eza, which can hang in a background shell: use `/bin/ls`.
+
+PROCESS:
+1. Write the script + scene. 2. Draft pass: `cd <folder> && VOICE=draft manimgx inspect scene.py` until exit 0 and "layout: no problems in N samples"; READ EVERY storyboard PNG and fix what you see (overlaps, cramped or empty frames, text over lines, misaligned baselines, faint or half-drawn objects). 3. Voice pass: `manimgx inspect scene.py`. For a line below 100% after 4 takes, transcribe the clip (librosa 16 kHz → mlx_whisper, path_or_hf_repo="mlx-community/whisper-large-v3-turbo") to decide: checker false alarm (keep) or real misread (reword, `python3 ~/.claude/skills/tutorial-video/scripts/drop_lines.py voice '<regex>'`, re-run inspect). 4. `python3 ~/.claude/skills/tutorial-video/scripts/drop_lines.py voice . --voice-id draft_voice`. 5. `manimgx render scene.py`, then `manimgx present scene.py --no-open`. 6. From INSIDE your folder: `{NARRATOR_PYTHON} ~/.claude/skills/tutorial-video/scripts/verify_audio.py <Scene>.mp4 --terms AI,<every ALL-CAPS acronym you say>`; and a sync check of 2 cues with `manimgx inspect scene.py -t a,b -o /tmp/ep{NN}_sync.png` (Read it).
+
+FINAL REPORT (short): paths of MP4/SRT/HTML/scene.py; duration; layout result; verify_audio summary; lines reworded or below 100% and why; new icons/helpers; facts you checked (with sources) and anything you are unsure about.
+"""
+
+COMMON = """
+SERIES NOTES (apply to every episode):
+- Visual language (keep it consistent — viewers learn it once): role colours are fixed — system ORCHID, user AZURE, assistant/model CORAL, tool call SUN, tool result MINT; good MINT, bad ROSE. Headers use your module's accent (kit picks it). Display text (titles, big numbers, recap words) in title_text (Futura Bold); reading text in text() (Avenir); code, JSON, file names, commands and exact strings in code() / code_block / json_card (Menlo). The context window is drawn with ContextColumn; a token budget with Meter; the agent as otto(); the cycle as loop_ring.
+- The series agent is Otto, working in a small repo `tinyshop/` (cart.py, checkout.py, tests/). Use Otto and tinyshop whenever the topic allows; when another example teaches better (a voice call, a browser task, a research question), use it and say so.
+- Facts: prefer the two references (via research/notes.md) and well-known primary sources (papers, official docs). Show "Source, Year" in small MUTED text (font_size ≥ 20) near a claim that needs one, e.g. "Yao et al., 2022", "Anthropic, 2024", "learn-claude-code · s08", "Li, AI Agents in Depth · ch. 2". Facts move fast: keep claims conservative, avoid vendor-specific prices unless the notes give a sourced number, and record the fact date (October 2026) in the section notes.
+- No real logos, screenshots or photos; draw interfaces as simple cards. Product names (Claude Code, Cursor, OpenClaw, Manus) are fine as text.
+- Pronunciation (measured before you started): these pass the voice check as written — AI, MCP, LLM, RAG, JSON, API, ReAct, A2A, YAML, SFT, RL, GRPO, PPO, KV cache, SWE-bench, cron, git worktree, OpenClaw, Manus, Claude Code, pytest, HTTP, GPU. "TodoWrite" is in the lexicon (spoken "to-do write"). The agent's name "Otto" passes. Spoken letters (single "W", "k") and symbols are risky: write words ("pass at k" is fine). Numbers as words in narration; digits fine on screen.
+- ManimGX: kit.py already fixes TransformFromCopy/FadeTransform early-show and parts animated after their group's intro in the same line. Still: never Indicate/Wiggle on a LATER cue an object whose intro may still be running (use Circumscribe); probe any doubtful line with inspect -t just before/after its cue. Chained .animate.shift(v) steps in one Succession land wrong (resolved at start): use absolute move_to. Never name a scene method voice, film or say (it replaces the narrator). ContextColumn: never run two push() calls in the same cue with a lag (LaggedStart) — if the second push scrolls the column while the first row is still fading in, that row freezes dim; push in separate cues or one after another. Within one line, fade out the SAME group object you faded in (a new VGroup of the same parts stays on screen — manimgx.md gotcha 24).
+- Code colours: kit.code(s, t2c={regex: colour}) matches REGEXES itself (ManimGX's own Text t2c takes literal strings only); code_block / json_card / terminal are already highlighted. To colour a Text made elsewhere, use kit.paint(text_mob, src, {regex: colour}).
+- Margins: keep every object ≥ 0.5 units inside the frame edges (the layout check only catches cut-offs, not text flush against the edge), and make sure cards placed late never cover earlier arrows or labels still on screen.
+- Menlo has no ligatures, so "<|", "->", "!=", "==" print as typed. Text() strips leading spaces of a single line: indent by position (multi-line strings keep their indentation).
+"""
+
+
+def course_rows():
+    rows = {}
+    for line in (SERIES_DIR / "COURSE.md").read_text().splitlines():
+        cells = [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
+        if len(cells) == 7 and cells[0].isdigit():
+            n = int(cells[0])
+            rows[n] = dict(title=cells[1].strip("*"), goal=cells[2], concepts=cells[3], mechanism=cells[4], example=cells[5])
+    return rows
+
+
+def module_of(n):
+    src = (SERIES_DIR / "kit.py").read_text()
+    episodes = {int(a): int(c) for a, b, c in re.findall(r"(\d+): \(\"(.+?)\", (\d)\)", src)}
+    return episodes[n]
+
+
+def brief(n, rows):
+    slug, cls, refs, sections, notes = SPEC[n]
+    row, module = rows[n], module_of(n)
+    references = "; ".join(f"{REFS[r][0]} — {REFS[r][1]}" if r in REFS else r for r in refs)
+    fill = {
+        "{N}": str(n), "{NN}": f"{n:02d}", "{TITLE}": row["title"], "{M}": str(module),
+        "{MODULE_NAME}": MODULE_NAMES[module], "{SERIES_DIR}": str(SERIES_DIR), "{slug}": slug,
+        "{ClassName}": cls, "{GOAL}": row["goal"], "{CONCEPTS}": row["concepts"],
+        "{MECHANISM}": row["mechanism"], "{EXAMPLE}": row["example"], "{NOTES}": notes,
+        "{NOTES_SECTIONS}": sections, "{REFERENCE_EPISODES}": references, "{NARRATOR_PYTHON}": NARRATOR_PYTHON,
+    }
+    text = TEMPLATE
+    for key, value in fill.items():
+        text = text.replace(key, value)
+    leftover = re.findall(r"\{(?:[A-Z_]+|slug|ClassName)\}", text)
+    assert not leftover, (n, leftover)
+    return text.rstrip() + "\n" + COMMON
+
+
+def main():
+    rows = course_rows()
+    numbers = [int(a) for a in sys.argv[1:]] or sorted(SPEC)
+    for n in numbers:
+        path = HERE / f"ep{n:02d}.md"
+        path.write_text(brief(n, rows))
+        print(path.name, len(path.read_text().split()), "words")
+
+
+if __name__ == "__main__":
+    main()
